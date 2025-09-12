@@ -1,0 +1,164 @@
+--- CODE CELL ---
+import numpy as np
+import torch
+import pandas as pd
+from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
+from sklearn.model_selection import train_test_split
+from datasets import Dataset
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, TrainingArguments, Trainer
+
+--- CODE CELL ---
+df = pd.read_csv("F:/Projects/Machine and Deep Learning/Depression_Severity/Datasets/train_lemma.csv") 
+df
+
+--- CODE CELL ---
+print(f"Dataset shape: {df.shape}")
+
+--- CODE CELL ---
+label_cols = [col for col in df.columns if col not in ['id', 'comment_text', 'lemmas']]
+print(f"Label columns: {label_cols}")
+
+--- CODE CELL ---
+print("\nLabel distribution:")
+for col in label_cols:
+    pos_count = df[col].sum()
+    total_count = len(df)
+    print(f"  {col}: {pos_count}/{total_count} ({pos_count/total_count:.3f})")
+
+--- CODE CELL ---
+train_df, val_df = train_test_split(df, test_size=0.2, random_state=42)
+print(f"Train shape: {train_df.shape}, Validation shape: {val_df.shape}")
+
+--- CODE CELL ---
+train_dataset = Dataset.from_pandas(train_df)
+val_dataset = Dataset.from_pandas(val_df)
+
+--- CODE CELL ---
+tokenizer = AutoTokenizer.from_pretrained("distilbert/distilbert-base-uncased")
+model = AutoModelForSequenceClassification.from_pretrained(
+    "distilbert/distilbert-base-uncased",
+    num_labels=len(label_cols),
+    problem_type="multi_label_classification"
+)
+
+--- CODE CELL ---
+def tokenize_function(batch):
+    encoding = tokenizer(
+        batch["lemmas"],
+        padding="max_length",
+        truncation=True,
+        max_length=128
+    )
+    
+    labels = []
+    for i in range(len(batch["lemmas"])):
+        label_row = [float(batch[col][i]) for col in label_cols]  # cast here
+        labels.append(label_row)
+    
+    encoding["labels"] = labels
+    return encoding
+
+--- CODE CELL ---
+train_dataset = train_dataset.map(tokenize_function, batched=True)
+val_dataset = val_dataset.map(tokenize_function, batched=True)
+
+--- CODE CELL ---
+train_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+val_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+
+--- CODE CELL ---
+def compute_metrics(eval_pred):
+    logits, labels = eval_pred
+    
+    # Convert to numpy
+    if isinstance(logits, torch.Tensor):
+        logits = logits.cpu().numpy()
+    if isinstance(labels, torch.Tensor):
+        labels = labels.cpu().numpy()
+    
+    # Get probabilities using sigmoid
+    probs = torch.sigmoid(torch.tensor(logits)).numpy()
+    
+    # Use simple 0.5 threshold for all labels
+    preds = (probs >= 0.5).astype(int)
+    
+    print(f"Predictions shape: {preds.shape}")
+    print(f"Labels shape: {labels.shape}")
+    print(f"Positive predictions per label: {np.sum(preds, axis=0)}")
+    print(f"Positive labels per label: {np.sum(labels, axis=0)}")
+    
+    # Compute metrics
+    f1 = f1_score(labels, preds, average="micro", zero_division=0)
+    precision = precision_score(labels, preds, average="micro", zero_division=0)
+    recall = recall_score(labels, preds, average="micro", zero_division=0)
+    
+    # Per-label F1 for debugging
+    f1_per_label = f1_score(labels, preds, average=None, zero_division=0)
+    print(f"Per-label F1: {dict(zip(label_cols, f1_per_label))}")
+    
+    try:
+        auc = roc_auc_score(labels, probs, average="micro")
+    except ValueError:
+        auc = 0.0
+    
+    return {
+        "f1": f1,
+        "precision": precision,
+        "recall": recall,
+        "auc": auc
+    }
+
+--- CODE CELL ---
+training_args = TrainingArguments(
+    output_dir="./temp_results",
+    eval_strategy="epoch",
+    save_strategy='epoch',
+    learning_rate=2e-5,
+    per_device_train_batch_size=32,
+    per_device_eval_batch_size=32,
+    num_train_epochs=5,
+    weight_decay=0.01,
+    logging_strategy="epoch",
+    load_best_model_at_end=True,
+    metric_for_best_model="f1",
+    greater_is_better=True,
+    report_to="none",
+    remove_unused_columns=True,
+    fp16=torch.cuda.is_available(),  
+    dataloader_num_workers=8, 
+)
+
+--- CODE CELL ---
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=train_dataset,
+    eval_dataset=val_dataset,
+    tokenizer=tokenizer,
+    compute_metrics=compute_metrics
+)
+
+--- CODE CELL ---
+print("Starting training...")
+trainer.train()
+
+# Final evaluation
+print("\nFinal evaluation:")
+final_metrics = trainer.evaluate()
+print(f"Final F1: {final_metrics['eval_f1']:.4f}")
+print(f"Final Precision: {final_metrics['eval_precision']:.4f}")
+print(f"Final Recall: {final_metrics['eval_recall']:.4f}")
+print(f"Final AUC: {final_metrics['eval_auc']:.4f}")
+
+--- CODE CELL ---
+save_dir = "./my_model"
+
+model.save_pretrained(save_dir)
+tokenizer.save_pretrained(save_dir)
+
+--- CODE CELL ---
+
+
+--- CODE CELL ---
+
+

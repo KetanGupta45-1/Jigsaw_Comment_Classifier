@@ -1,0 +1,21 @@
+# Ignore datasets
+/Datasets/
+*.csv
+*.tsv
+*.jsonl
+
+# Ignore large models/checkpoints
+*.pth
+*.bin
+*.safetensors
+/Final_Modelling/temp_results/
+tokenizer.json
+vocab.txt
+for each LLM used.
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Python cache
+__pycache__/
+*.pyc
